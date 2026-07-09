@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAN Share</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --line: #232b36;
+    --text: #e6edf3;
+    --dim: #7d8590;
+    --accent: #39d98a;
+    --accent-dim: #1c7d4d;
+    --danger: #f85149;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    padding: 24px 16px 80px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  header { display:flex; align-items:baseline; justify-content:space-between; margin-bottom: 24px; }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+  .logo::before { content: "▲ "; color: var(--accent); }
+  .status { font-size: 12px; color: var(--dim); display:flex; align-items:center; gap:6px; }
+  .dot { width:7px; height:7px; border-radius:50%; background: var(--danger); display:inline-block; }
+  .dot.live { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+  .qr-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .qr-card img { width: 84px; height: 84px; border-radius: 6px; background:#fff; padding:4px; flex-shrink:0; }
+  .qr-text { font-size: 12px; color: var(--dim); line-height: 1.5; }
+  .qr-text .url { color: var(--accent); font-size: 13px; word-break: break-all; display:block; margin-top:4px; }
+
+  .drop {
+    border: 2px dashed var(--line);
+    border-radius: 12px;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--dim);
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    margin-bottom: 24px;
+  }
+  .drop.drag { border-color: var(--accent); background: rgba(57,217,138,0.06); color: var(--text); }
+  .drop .big { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+  .drop .small { font-size: 12px; }
+  input[type=file] { display:none; }
+
+  .section-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--dim); margin: 0 0 10px 2px;
+  }
+
+  .files { display:flex; flex-direction:column; gap:8px; }
+  .file-row {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    display:flex;
+    align-items:center;
+    gap: 12px;
+  }
+  .file-icon { font-size: 20px; width:24px; text-align:center; flex-shrink:0; }
+  .file-meta { flex:1; min-width:0; }
+  .file-name { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .file-size { font-size:11px; color:var(--dim); margin-top:2px; }
+  .file-actions { display:flex; gap:8px; flex-shrink:0; }
+  .btn {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-decoration:none;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    color: var(--text);
+    background: transparent;
+    cursor: pointer;
+  }
+  .btn.download { border-color: var(--accent-dim); color: var(--accent); }
+  .btn.delete { color: var(--dim); }
+  .btn.delete:hover { color: var(--danger); border-color: var(--danger); }
+
+  .empty { text-align:center; color: var(--dim); font-size:13px; padding: 20px 0; }
+
+  progress {
+    width: 100%; height: 6px; margin-top: 10px; accent-color: var(--accent);
+    border-radius: 4px; overflow:hidden;
+  }
+  .upload-list { display:flex; flex-direction:column; gap:8px; margin-bottom: 20px; }
+  .upload-row { background: var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">LAN Share</div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
+  </header>
+
+  <div class="qr-card">
+    <img id="qrImg" alt="QR code" src="">
+    <div class="qr-text">
+      Scan from the other device to connect on this network.
+      <span class="url" id="qrUrl">loading…</span>
+    </div>
+  </div>
+
+  <div class="drop" id="drop">
+    <div class="big">Drop files here or tap to choose</div>
+    <div class="small">Photos, videos, APKs — any file, any size</div>
+    <input type="file" id="fileInput" multiple>
+  </div>
+
+  <div class="upload-list" id="uploadList"></div>
+
+  <div class="section-label">Shared files</div>
+  <div class="files" id="files"><div class="empty">No files yet</div></div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const filesEl = document.getElementById('files');
+const uploadList = document.getElementById('uploadList');
+const dot = document.getElementById('dot');
+const statusText = document.getElementById('statusText');
+
+// --- QR code ---
+fetch('/api/qr').then(r => r.json()).then(({url, dataUrl}) => {
+  document.getElementById('qrImg').src = dataUrl;
+  document.getElementById('qrUrl').textContent = url;
+});
+
+// --- Icons by extension ---
+function iconFor(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','webp','heic'].includes(ext)) return '🖼️';
+  if (['mp4','mov','avi','mkv','webm'].includes(ext)) return '🎬';
+  if (['apk'].includes(ext)) return '📱';
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '🗜️';
+  if (['pdf'].includes(ext)) return '📄';
+  if (['mp3','wav','m4a'].includes(ext)) return '🎵';
+  return '📦';
+}
+
+function renderFiles(files) {
+  if (!files.length) {
+    filesEl.innerHTML = '<div class="empty">No files yet</div>';
+    return;
+  }
+  filesEl.innerHTML = files.map(f => `
+    <div class="file-row">
+      <div class="file-icon">${iconFor(f.name)}</div>
+      <div class="file-meta">
+        <div class="file-name">${escapeHtml(f.name)}</div>
+        <div class="file-size">${f.size}</div>
+      </div>
+      <div class="file-actions">
+        <a class="btn download" href="/files/${encodeURIComponent(f.name)}" download>Download</a>
+        <button class="btn delete" onclick="deleteFile('${escapeHtml(f.name).replace(/'/g,"\\'")}')">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function deleteFile(name) {
+  fetch('/api/files/' + encodeURIComponent(name), { method: 'DELETE' });
+}
+
+// --- WebSocket for live updates ---
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}`);
+  ws.onopen = () => { dot.classList.add('live'); statusText.textContent = 'connected'; };
+  ws.onclose = () => { dot.classList.remove('live'); statusText.textContent = 'reconnecting'; setTimeout(connectWs, 1500); };
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'update') renderFiles(msg.files);
+  };
+}
+connectWs();
+
+// --- Upload handling ---
+function uploadFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+
+  const rowId = 'u' + Date.now();
+  const row = document.createElement('div');
+  row.className = 'upload-row';
+  row.id = rowId;
+  row.innerHTML = `Uploading ${files.length} file${files.length>1?'s':''}… <progress value="0" max="100"></progress>`;
+  uploadList.appendChild(row);
+
+  const formData = new FormData();
+  files.forEach(f => formData.append('files', f));
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/upload');
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100);
+      row.querySelector('progress').value = pct;
+    }
+  };
+  xhr.onload = () => { row.remove(); };
+  xhr.onerror = () => { row.innerHTML = 'Upload failed'; };
+  xhr.send(formData);
+}
+
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => uploadFiles(e.target.files));
+
+['dragenter','dragover'].forEach(evt =>
+  drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.add('drag'); })
+);
+['dragleave','drop'].forEach(evt =>
+  drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.remove('drag'); })
+);
+drop.addEventListener('drop', (e) => uploadFiles(e.dataTransfer.files));
+</script>
+</body>
+</html>
